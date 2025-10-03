@@ -1,153 +1,103 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Three GLB Viewer – Deep Debug</title>
-<style>
-  html,body{height:100%} body{margin:0;overflow:hidden;background:#111;color:#fff;font-family:system-ui}
-  #log{position:absolute;top:10px;left:10px;right:10px;background:rgba(0,0,0,.6);padding:10px 12px;border-radius:8px;font-size:12px;max-height:45vh;overflow:auto}
-  #log .ok{color:#9f9} #log .warn{color:#ff9} #log .err{color:#f99}
-</style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Three GLB Viewer</title>
+  <style>
+    html,body{height:100%}
+    body{margin:0;overflow:hidden;background:#111;color:#fff;font-family:system-ui}
+    #log{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.6);
+         padding:8px 10px;border-radius:6px;font-size:12px;max-width:320px;
+         max-height:40vh;overflow:auto}
+  </style>
 </head>
 <body>
-<div id="log">Ini2t…</div>
+<div id="log">Init…</div>
 
-<!-- Global error taps so ANY error shows on-page -->
+<!-- show any errors on the page too -->
 <script>
   (function(){
-    const logDiv = document.getElementById('log');
-    function log(m, cls=''){ const p=document.createElement('div'); if(cls) p.className=cls; p.textContent=m; logDiv.appendChild(p); console.log(m); }
-    window.__dbglog = log;
-    window.addEventListener('error', e => { log('❌ JS Error: '+ (e.message||e), 'err'); });
-    window.addEventListener('unhandledrejection', e => { log('❌ Promise Rejection: '+ (e.reason?.message || e.reason || e), 'err'); });
+    const logDiv=document.getElementById('log');
+    const add=(m,c)=>{ const p=document.createElement('div'); if(c) p.className=c; p.textContent=m; logDiv.appendChild(p); console.log(m); };
+    window.__log = add;
+    add('Page loaded.'); 
+    window.addEventListener('error', e => add('❌ JS Error: '+(e.message||e),'err'));
+    window.addEventListener('unhandledrejection', e => add('❌ Promise Rejection: '+(e.reason?.message||e.reason||e),'err'));
   })();
 </script>
 
 <script type="module">
-import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
-import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+  import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+  import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+  import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 
-const log = window.__dbglog;
-log('Step 1: Modules imported.', 'ok');
+  const log = window.__log;
+  log('Three.js modules imported.');
 
-// 0) Quick WebGL sanity
-const canvas = document.createElement('canvas');
-const hasGL2 = !!canvas.getContext('webgl2');
-const hasGL1 = !!canvas.getContext('webgl') || !!canvas.getContext('experimental-webgl');
-if (!hasGL2 && !hasGL1) {
-  log('❌ WebGL not available in this browser/device.', 'err');
-  throw new Error('WebGL unavailable');
-}
-log('Step 2: WebGL available (GL2:'+hasGL2+', GL1:'+hasGL1+').', 'ok');
+  // since sun.glb sits beside index.html in repo root, use a relative URL
+  const VERSION = 'v=1'; // bump this if you update the file to bust cache
+  const modelURL = `./sun.glb?${VERSION}`;
 
-// 1) Scene & camera
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
-const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 1000);
-camera.position.set(0,1,3);
-log('Step 3: Scene & camera created.', 'ok');
+  // scene
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111);
 
-// 2) Renderer
-let renderer;
-try {
-  renderer = new THREE.WebGLRenderer({ antialias:true });
-  // (older three uses outputEncoding; this is safe either way)
+  // camera
+  const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 1000);
+  camera.position.set(0, 1, 3);
+
+  // renderer
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
   if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace;
   else renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.setSize(innerWidth, innerHeight);
   document.body.appendChild(renderer.domElement);
-  log('Step 4: Renderer created & added to DOM.', 'ok');
-} catch(e) {
-  log('❌ Renderer creation failed: ' + (e.message || e), 'err');
-  throw e;
-}
 
-// 3) Controls + lights
-try {
+  // controls + light
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  scene.__controls = controls;
   scene.add(new THREE.HemisphereLight(0xffffff, 0x222233, 1));
-  log('Step 5: Controls & light added.', 'ok');
-} catch(e) {
-  log('❌ Controls/Lights failed: ' + (e.message || e), 'err');
-  throw e;
-}
 
-// 4) Load model (via fetch -> blob -> GLTFLoader)
-const VERSION = 'v=6';
-const modelURL = `https://storage.googleapis.com/threejs232323/sun.glb?${VERSION}`;
-log('Step 6: About to fetch: ' + modelURL);
-
-let model = null;
-
-async function loadModel() {
-  const res = await fetch(modelURL, { mode:'cors', cache:'no-cache' });
-  log('Fetch status: ' + res.status + ' ' + res.statusText, res.ok ? 'ok' : 'err');
-  if (!res.ok) throw new Error('HTTP '+res.status);
-  const aco = res.headers.get('access-control-allow-origin');
-  const ct = res.headers.get('content-type');
-  if (aco) log('CORS header: ' + aco, 'ok');
-  if (ct)  log('Content-Type: ' + ct, 'ok');
-  const blob = await res.blob();
-  log('Fetched size: ' + (blob.size/1024).toFixed(1) + ' KB', 'ok');
-  const blobURL = URL.createObjectURL(blob);
-
+  // loader
   const loader = new GLTFLoader();
-  loader.setCrossOrigin('anonymous');
-  log('Step 7: GLTFLoader created, starting load…');
+  loader.setCrossOrigin('anonymous'); // harmless on same-origin
 
-  return new Promise((resolve, reject) => {
-    const t0 = performance.now();
-    loader.load(
-      blobURL,
-      (gltf) => {
-        const ms = (performance.now() - t0).toFixed(0);
-        log('✅ GLTF loaded in '+ms+' ms', 'ok');
-        resolve(gltf);
-      },
-      (xhr) => {
-        if (xhr.lengthComputable) {
-          log('Progress: ' + (xhr.loaded/xhr.total*100).toFixed(1) + '%');
-        } else {
-          log('Loaded bytes: ' + xhr.loaded);
-        }
-      },
-      (err) => {
-        log('❌ GLTF error: ' + (err?.message || err), 'err');
-        reject(err);
+  log('Loading: ' + modelURL);
+  let model = null;
+  loader.load(
+    modelURL,
+    (gltf) => {
+      model = gltf.scene;
+      scene.add(model);
+      log('✅ Loaded GLB and added to scene.');
+    },
+    (xhr) => {
+      if (xhr.lengthComputable) {
+        log('Progress: ' + (xhr.loaded / xhr.total * 100).toFixed(1) + '%');
+      } else {
+        log('Loaded bytes: ' + xhr.loaded);
       }
-    );
+    },
+    (err) => {
+      log('❌ GLTF error: ' + (err?.message || err), 'err');
+    }
+  );
+
+  // resize
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
   });
-}
 
-try {
-  const gltf = await loadModel();
-  model = gltf.scene;
-  scene.add(model);
-  log('Step 8: Model added to scene.', 'ok');
-} catch(e) {
-  log('❌ Load flow failed: ' + (e.message || e), 'err');
-}
-
-// 5) Resize + render loop
-addEventListener('resize', () => {
-  camera.aspect = innerWidth/innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
-
-function animate() {
-  requestAnimationFrame(animate);
-  if (model) model.rotation.y += 0.005;
-  if (scene.__controls) scene.__controls.update();
-  renderer.render(scene, camera);
-}
-log('Step 9: Starting render loop…', 'ok');
-animate();
-
+  // loop
+  (function animate(){
+    requestAnimationFrame(animate);
+    if (model) model.rotation.y += 0.005;
+    controls.update();
+    renderer.render(scene, camera);
+  })();
 </script>
 </body>
 </html>
